@@ -1,30 +1,24 @@
-package examples.ch1
+package examples
+package ch1
 
-import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
+import java.util.concurrent.ConcurrentHashMap
 
 import scala.concurrent.duration._
 import scala.concurrent.Future
+
 import monix.eval.Task
-import monix.execution.Ack.Continue
 import monix.execution.{Cancelable, Scheduler}
 import monix.execution.Scheduler.Implicits.global
 import monix.reactive.Observable
 
+import util.observable._
+import util.time._
+
 object Chapter1 extends App {
-
-  implicit class PrinterObservable[A](val self: Observable[A]) extends AnyVal {
-
-    // Monix has a `.dump` transformation for this, but let's have a `.subscribe` alias
-    def subscribePrintln(prefix: String = "") = self.subscribe { a =>
-      println(prefix concat a.toString)
-      Continue
-    }
-
-  }
 
   private val SOME_KEY = "FOO"
 
-  def sleep(duration: Duration) = TimeUnit.MILLISECONDS.sleep(duration.toMillis)
+  // gonna copy this numbering scheme, but it's not tied to pages or anything
 
   // 6
   Observable.unsafeCreate[String] { s =>
@@ -52,6 +46,7 @@ object Chapter1 extends App {
     // 35
     def getFromCache(key: String) = s"$key:123"
 
+    // replaced the mutable callback thingamajig with a Future
     def getDataAsynchronously(key: String) =
       Future {
         sleep(1.second)
@@ -105,8 +100,7 @@ object Chapter1 extends App {
   {
     // 94
     Observable.unsafeCreate[Int] { s =>
-      //... async subscription and data emission ...
-      // it's generally advised to not start a thread like that inside an Observable
+      // this is just for illustration, don't start threads inside Observable
       new Thread(() => s.onNext(42), "MyThread").start()
       Cancelable.empty
     }
@@ -201,20 +195,21 @@ object Chapter1 extends App {
   println("---------")
 
   { // 265
+    // Monix has `Task` instead of `Single`
     def getDataA: Task[String] = Task.now("DataA")     // ditto for 277
     def getDataB: Task[String] = Task.now("DataB")     //
 
     // merge a & b into an Observable stream of 2 values
-
     val a_merge_b = Observable.merge(
       Observable.fromTask(getDataA).subscribeOn(Scheduler.io()),
       Observable.fromTask(getDataB).subscribeOn(Scheduler.io())
     )
     a_merge_b.subscribePrintln()
+
     sleep(50.millis)   // gotta sleep here so that JVM doesn't exit immediately and we get to see the result
 
   }
 
-  // Monix doesn't have Completable, pretty sure you can just use `Task[Unit]`
+  // Monix doesn't have `Completable`, pretty sure you can just use `Task[Unit]`
 
 }
