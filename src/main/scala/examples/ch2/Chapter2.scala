@@ -187,35 +187,59 @@ object Chapter2 extends App {
 
   println("---------")
 
-  {
-
-    def sleep_(duration: Duration) =
-      try
-        sleep(duration)
-      catch {
-        case _: InterruptedException =>
-      }
-
-    def delayed[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
-      new Thread(() => {
-        sleep_(10.seconds)
-        subscriber.onNext(x) // again, the check for completion is already made in the wrapper
-      }).start()
-      Cancelable(() => subscriber.onComplete())
+  def sleep_(duration: Duration) =
+    try
+      sleep(duration)
+    catch {
+      case _: InterruptedException =>
     }
 
-    def delayed2[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
-      val thread = new Thread(() => {
-        sleep_(10.seconds)
-        subscriber.onNext(x)
-      })
-      thread.start()
-      Cancelable { () =>
-        subscriber.onComplete()  // signal completion first
-        thread.interrupt()
-      }
-    }
-
+  def delayed[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
+    new Thread(() => {
+      sleep_(10.seconds)
+      subscriber.onNext(x) // again, the check for completion is already made in the wrapper
+    }).start()
+    Cancelable(() => subscriber.onComplete())
   }
+
+  def delayed2[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
+    val thread = new Thread(() => {
+      sleep_(10.seconds)
+      subscriber.onNext(x)
+    })
+    thread.start()
+    Cancelable { () =>
+      subscriber.onComplete() // signal completion first
+      thread.interrupt()
+    }
+  }
+
+  // skipped `loadAll`
+
+  // no need to manually wrap in try-catch as in `rxLoad`, Monix does that for us
+
+  // `fromCallable` in Monix is `eval`
+
+  {
+    // 304
+    Observable.evalDelayed(1.second, 0L).subscribe { i =>
+      log(i.toString)
+      Continue
+    }
+    sleep(2.seconds)
+  }
+
+  println("---------")
+
+  { // 311
+    // you can see how initial 0 and subsequent values are emitted on different threads
+    Observable.interval((1000000 / 60).microseconds).subscribe { i =>
+      log(i.toString)
+      Continue
+    }
+    sleep(2.seconds)
+  }
+
+
 
 }
