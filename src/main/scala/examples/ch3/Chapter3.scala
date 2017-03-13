@@ -1,7 +1,7 @@
 package examples
 package ch3
 
-import java.time.DayOfWeek
+import java.time.{DayOfWeek, LocalDate}
 import java.util.UUID
 
 import scala.concurrent.duration._
@@ -16,7 +16,6 @@ import util.observable._
 import util.time._
 
 class CarPhoto {}
-
 class LicensePlate {}
 
 class Order {}
@@ -26,6 +25,47 @@ class Customer {
 }
 
 class Rating {}
+class Profile {}
+
+class User {
+  def loadProfile = {
+    //Make HTTP request...
+    Observable(new Profile)
+  }
+}
+
+trait WeatherStation {
+  def temperature: Observable[Temperature]
+  def wind: Observable[Wind]
+}
+
+class BasicWeatherStation extends WeatherStation {
+  def temperature: Observable[Temperature] = Observable(new Temperature)
+  def wind: Observable[Wind] = Observable(new Wind)
+}
+
+class Temperature {}
+class Wind {}
+
+class Weather(temperature: Temperature, wind: Wind) {
+  def isSunny = true
+  def getTemperature = temperature
+}
+
+sealed trait City
+case object Warsaw extends City
+case object London extends City
+case object Paris extends City
+case object NewYork extends City
+
+class Flight {}
+class Hotel {}
+
+class Vacation(where: City, when: LocalDate) {
+  def weather = Observable(new Weather(new Temperature, new Wind))
+  def cheapFlightFrom(from: City) = Observable(new Flight)
+  def cheapHotel = Observable(new Hotel)
+}
 
 object Chapter3 extends App {
 
@@ -106,7 +146,7 @@ object Chapter3 extends App {
     case object DI extends Sound
     case object DAH extends Sound
 
-    def toMorseCode(ch: Char): Observable[Sound] =
+    def toMorseCode(ch: Char) =
       ch match {
         case 'a' => Observable(DI, DAH)
         case 'b' => Observable(DAH, DI, DI, DI)
@@ -154,7 +194,7 @@ object Chapter3 extends App {
 
   {
     // 218
-    // there's no "global" `delay` in Monix, so we skip to the second version
+    // there's no such version of `delay` in Monix, so we skip to the second version
     // again, note that `flatMap` in Monix is deterministic, so we use `mergeMap` directly
 
     Observable("Lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit")
@@ -179,16 +219,118 @@ object Chapter3 extends App {
 
     Observable(DayOfWeek.SUNDAY, DayOfWeek.MONDAY)
       .mergeMap(loadRecordsFor)
-      .subscribePrintln()  // the output here is a bit scrambled, e.g. Sun-0 comes before Mon-0
+      .subscribePrintln() // the output here is a bit scrambled, e.g. Sun-0 comes before Mon-0
     sleep(1.seconds)
 
     println("---")
 
     Observable(DayOfWeek.SUNDAY, DayOfWeek.MONDAY)
       .concatMap(loadRecordsFor)
-      .subscribePrintln()  // the output here is a bit scrambled, e.g. Sun-0 comes before Mon-0
+      .subscribePrintln() // the output here is a bit scrambled, e.g. Sun-0 comes before Mon-0
     sleep(1.seconds)
   }
 
+  {
+    // 258
+    val veryLargeList = List(new User, new User, new User, new User)
+    val profiles = Observable.fromIterable(veryLargeList).mergeMap(_.loadProfile)
+    // instead of `maxConcurrent` you can be more flexible with `OverflowStrategy` in Monix
+  }
+
+  {
+    // 317
+    def fastAlgo(photo: CarPhoto) = {
+      //Fast but poor quality
+      Observable(new LicensePlate)
+    }
+
+    def preciseAlgo(photo: CarPhoto) = {
+      //Precise but can be expensive
+      Observable(new LicensePlate)
+    }
+
+    def experimentalAlgo(photo: CarPhoto) = {
+      //Unpredictable, running anyway
+      Observable(new LicensePlate)
+    }
+
+    val photo = new CarPhoto
+    val all = Observable.merge(preciseAlgo(photo), fastAlgo(photo), experimentalAlgo(photo)) // `merge` is just `mergeMap(identity)`
+  }
+
+  {
+    // 286
+    val station = new BasicWeatherStation
+    val temperatureMeasurements = station.temperature
+    val windMeasurements = station.wind
+    temperatureMeasurements.zipMap(windMeasurements)(new Weather(_, _))
+  }
+
+  {
+    // 298
+    val oneToEight = Observable.range(1, 8)
+    val ranks = oneToEight.map(_.toString)
+    val files = oneToEight.map(x => 'a' + x - 1).map(_.toChar.toString) // don't need `intValue`, Char + number = number
+    val squares = files.flatMap(file => ranks.map(_ concat file)) // can be replaced w/ for-comprehension
+  }
+
+  {
+    // 312
+    val nextTenDays: Observable[LocalDate] = Observable.range(1, 10).map(i => LocalDate.now().plusDays(i))
+    val possibleVacations =
+      Observable(Warsaw, London, Paris).flatMap(city =>
+        nextTenDays
+          .map(date => new Vacation(city, date))
+          .flatMap(vacation =>
+            Observable.zipMap3(
+              vacation.weather.filter(_.isSunny),
+              vacation.cheapFlightFrom(NewYork),
+              vacation.cheapHotel
+            )((_, _, _) => vacation)
+          )
+      )
+  }
+
+  println("---------")
+
+  {
+    // 332
+    val red = Observable.interval(10.millis).map(_ => System.currentTimeMillis())
+    val green = Observable.interval(10.millis).map(_ => System.currentTimeMillis())
+    val c = Observable
+      .zipMap2(red, green)((r, g) => r - g)
+      .subscribePrintln()
+    sleep(1.seconds)
+    c.cancel()
+  }
+
+  println("---------")
+
+
+  {
+    // 345
+    val c = Observable
+      .combineLatestMap2(
+        Observable.interval(17.millis).map(x => s"S$x"),
+        Observable.interval(10.millis).map(x => s"F$x")
+      )((s, f) => s"$f:$s")
+      .subscribePrintln()
+    sleep(2.seconds)
+    c.cancel()
+  }
+
+  println("---------")
+
+  {
+    // 355
+    val fast = Observable.interval(10.millis).map(x => s"F$x")
+      .delaySubscription(100.millis).startWith(Seq("FX"))   // need the explicit Seq, otherwise String = Seq[Char]
+    val slow = Observable.interval(17.millis).map(x => s"S$x")
+    val c = slow
+      .withLatestFrom(fast)((s, f) => s"$f:$s")
+      .subscribePrintln()
+    sleep(1.seconds)
+    c.cancel()
+  }
 
 }
