@@ -12,6 +12,7 @@ import monix.execution.Scheduler.Implicits.global
 
 import twitter4j.Status
 
+import util.log._
 import util.observable._
 import util.time._
 
@@ -324,11 +325,52 @@ object Chapter3 extends App {
   {
     // 355
     val fast = Observable.interval(10.millis).map(x => s"F$x")
-      .delaySubscription(100.millis).startWith(Seq("FX"))   // need the explicit Seq, otherwise String = Seq[Char]
+      .delaySubscription(100.millis).startWith(Seq("FX")) // need the explicit Seq, otherwise String = Seq[Char]
     val slow = Observable.interval(17.millis).map(x => s"S$x")
     val c = slow
       .withLatestFrom(fast)((s, f) => s"$f:$s")
       .subscribePrintln()
+    sleep(1.seconds)
+    c.cancel()
+  }
+
+  println("---------")
+
+  {
+    // 367
+    Observable(1, 2)
+      .startWith(Seq(0)) // as seen before, `startWith` in Monix takes a `Seq`
+      .subscribePrintln()
+  }
+
+  println("---------")
+
+  def stream(initialDelayMs: Int, intervalMs: Int, name: String) =
+    Observable.intervalWithFixedDelay(initialDelayMs.millis, intervalMs.millis)
+      //      .dump(name)
+      .map(x => s"$name$x")
+      .doOnSubscribe(() =>
+        logTs(s"Subscribe to $name")
+      )
+      .doOnSubscriptionCancel(() =>
+        logTs(s"Unsubscribe from $name")
+      )
+
+  {
+    // 375
+    val c = Observable.firstStartedOf(stream(100, 17, "S"), stream(200, 10, "F"))
+      .subscribeLog()
+    sleep(1.seconds)
+    c.cancel()
+  }
+
+  println("---------")
+
+  {
+    // 393
+    val c = stream(100, 17, "S")
+      .ambWith(stream(200, 10, "F"))
+      .subscribeLog()
     sleep(1.seconds)
     c.cancel()
   }

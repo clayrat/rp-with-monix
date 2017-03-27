@@ -8,6 +8,7 @@ import monix.execution.Cancelable
 import monix.execution.Scheduler.Implicits.global
 import monix.reactive.{Observable, Observer}
 
+import util.log._
 import util.observable._
 import util.time._
 
@@ -83,8 +84,6 @@ object Chapter2 extends App {
     }
     tweets.subscribe(subscriber)
   }
-
-  def log[A](msg: A) = println(Thread.currentThread.getName concat ": " concat msg.toString)
 
   {
     // 117
