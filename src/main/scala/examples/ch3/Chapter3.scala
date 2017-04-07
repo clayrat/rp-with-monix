@@ -4,13 +4,17 @@ package ch3
 import java.time.{DayOfWeek, LocalDate}
 import java.util.UUID
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Random
 
 import monix.execution.Ack.{Continue, Stop}
-import monix.execution.Cancelable
+import monix.execution.{Ack, Cancelable, Scheduler}
 import monix.reactive.Observable
 import monix.execution.Scheduler.Implicits.global
+import monix.reactive.observables.GroupedObservable
+import monix.reactive.observables.ObservableLike.{Operator, Transformer}
+import monix.reactive.observers.Subscriber
 
 import twitter4j.Status
 
@@ -47,7 +51,6 @@ class BasicWeatherStation extends WeatherStation {
 
 class Temperature {}
 class Wind {}
-
 class Weather(temperature: Temperature, wind: Wind) {
   def isSunny = true
   def getTemperature: Temperature = temperature
@@ -79,6 +82,25 @@ object Car {
   def loadFromCache = Observable(new Car)
 }
 
+class ReservationEvent {
+  final private val uuid = UUID.randomUUID
+  def getReservationUuid: UUID = uuid
+}
+
+class Reservation {
+  def consume(event: ReservationEvent): Reservation = { //mutate myself
+    this
+  }
+}
+
+trait FactStore {
+  def observe: Observable[ReservationEvent]
+}
+
+class CassandraFactStore extends FactStore {
+  override def observe: Observable[ReservationEvent] = Observable(new ReservationEvent)
+}
+
 object Chapter3 extends App {
 
   {
@@ -88,7 +110,6 @@ object Chapter3 extends App {
     val instructions = strings.filter(_.startsWith(">"))
     val empty = strings.filter(_.isEmpty)
   }
-
 
   {
     // 26 + 49
@@ -280,7 +301,7 @@ object Chapter3 extends App {
 
   {
     // 298
-    val oneToEight = Observable.range(1, 8)
+    val oneToEight = Observable.range(1, 9)
     val ranks = oneToEight.map(_.toString)
     val files = oneToEight.map(x => 'a' + x - 1).map(_.toChar.toString) // don't need `intValue`, Char + number = number
     val squares = files.flatMap(file => ranks.map(_ concat file)) // can be replaced w/ for-comprehension
@@ -288,7 +309,7 @@ object Chapter3 extends App {
 
   {
     // 312
-    val nextTenDays: Observable[LocalDate] = Observable.range(1, 10).map(i => LocalDate.now().plusDays(i))
+    val nextTenDays = Observable.range(1, 11).map(i => LocalDate.now().plusDays(i))
     val possibleVacations =
       Observable(Warsaw, London, Paris).flatMap(city =>
         nextTenDays
@@ -317,7 +338,6 @@ object Chapter3 extends App {
   }
 
   println("---------")
-
 
   {
     // 345
@@ -423,6 +443,7 @@ object Chapter3 extends App {
 
   }
 
+  // Monix doesn't have `collect` - just use `foldLeftF`, preferably without mutable accums
   { // 456
     val all = Observable.range(10, 20).foldLeftF(new ListBuffer[Long]) { (list, item) =>
       list.append(item)
@@ -432,7 +453,7 @@ object Chapter3 extends App {
 
 
   // 463 + 470
-  // Monix doesn't have that version of `reduce` - just use `foldLeft`, preferably without mutable accums
+  // still no `collect`
 
   def randomInts: Observable[Int] =
     Observable.unsafeCreate[Int] { s =>
@@ -447,34 +468,34 @@ object Chapter3 extends App {
 
   { // 499
     val tweets = Observable.empty[Status]
-    val distinctUserIds: Observable[Long] = tweets.map(_.getUser.getId).distinct
+    val distinctUserIds = tweets.map(_.getUser.getId).distinct
   }
 
   { // 508
     val tweets = Observable.empty[Status]
-    val distinctUserIds: Observable[Status] = tweets.distinctByKey(_.getUser.getId)
+    val distinctUserIds = tweets.distinctByKey(_.getUser.getId)
   }
 
   { // 516
     val measurements = Observable.empty[Weather]
-    val tempChanges: Observable[Weather] = measurements.distinctUntilChangedByKey(_.getTemperature)
+    val tempChanges = measurements.distinctUntilChangedByKey(_.getTemperature)
   }
 
   { // 524
-    Observable.range(1, 5).take(3) // [1, 2, 3]
-    Observable.range(1, 5).drop(3) // [4, 5]       // not `skip`
-    Observable.range(1, 5).drop(5) // []
+    Observable.range(1, 6).take(3) // [1, 2, 3]
+    Observable.range(1, 6).drop(3) // [4, 5]       // not `skip`
+    Observable.range(1, 6).drop(5) // []
 
   }
 
   { // 531
-    Observable.range(1, 5).takeLast(2)
-    Observable.range(1, 5).dropLast(2) // not `skipLast`
+    Observable.range(1, 6).takeLast(2)
+    Observable.range(1, 6).dropLast(2) // not `skipLast`
   }
 
   { // 537
     // `takeUntil` in Monix has different semantics
-    Observable.range(1, 5).takeWhile(_ != 3) // [1, 2]
+    Observable.range(1, 6).takeWhile(_ != 3) // [1, 2]
 
   }
 
@@ -484,14 +505,14 @@ object Chapter3 extends App {
   }
 
   { // 550
-    val numbers = Observable.range(1, 5)
+    val numbers = Observable.range(1, 6)
     numbers.forAllF(_ != 4) // [false]
     numbers.existsF(_ == 4) // [true]
     // there's no `contains`
   }
 
   { // 559
-    val veryLong = Observable.range(0, 1000).map(_ => new Data)
+    val veryLong = Observable.range(0, 1001).map(_ => new Data)
     val ends = Observable.concat(veryLong.take(5), veryLong.takeLast(5))
   }
 
@@ -551,5 +572,156 @@ object Chapter3 extends App {
 
     sleep(timeout)
   }
+
+  def store(id: UUID, modified: Reservation) = {
+    //...
+  }
+
+  def loadBy(uuid: UUID) = { //...
+    Option(new Reservation)
+  }
+
+  def updateProjection(event: ReservationEvent): Ack = {
+    val uuid = event.getReservationUuid
+    val res = loadBy(uuid).getOrElse(new Reservation)
+    res.consume(event)
+    store(event.getReservationUuid, res)
+    Continue
+  }
+
+  { // 9
+    val factStore = new CassandraFactStore
+    val facts = factStore.observe
+    facts.subscribe(updateProjection _)
+  }
+
+  def updateProjectionAsync(event: ReservationEvent) = { //possibly asynchronous
+    Observable(new ReservationEvent)
+  }
+
+  { // 34
+    val factStore = new CassandraFactStore
+    val facts = factStore.observe
+    facts.flatMap(updateProjectionAsync).subscribe
+    //...
+  }
+
+  { // 52
+    val factStore = new CassandraFactStore
+    val facts = factStore.observe
+    val grouped = facts.groupBy(_.getReservationUuid)
+    grouped.subscribe { byUuid: GroupedObservable[UUID, ReservationEvent] =>
+      byUuid.subscribe(updateProjection _)
+      Continue
+    }
+  }
+
+  { // 589
+    val trueFalse = Observable(true, false).repeat
+    val upstream = Observable.range(30, 38)
+    val downstream = upstream
+      .zip(trueFalse)
+      .filter(_._2)
+      .map(_._1)
+  }
+
+  { // 600
+    val trueFalse = Observable(true, false).repeat
+    val upstream = Observable.range(30, 38)
+    upstream.zipMap(trueFalse)((t: Long, bool: Boolean) =>
+      if (bool) Observable(t) else Observable.empty
+    ).flatten
+  }
+
+  def odd[T]: Transformer[T, T] = {
+    val trueFalse = Observable(true, false).repeat
+    _.zip(trueFalse)
+     .filter(_._2)
+     .map(_._1)
+  }
+
+  println("---------")
+
+  { // 618
+    //[A, B, C, D, E...]
+    val alphabet = Observable.range(0, 'Z' - 'A' + 1).map(c => ('A' + c).toChar)
+    //[A, C, E, G, I...]
+    alphabet.transform(odd).subscribePrintln() // `compose` => `transform`
+  }
+
+  println("---------")
+
+  { // 9
+    Observable
+      .range(1, 1000)
+      .filter(_ % 3 == 0)
+      .distinct
+      .reduce((a, x) => a + x)
+      .map(_.toHexString)
+      .subscribePrintln()
+  }
+
+  // see the implementation @ monix.reactive.internal.operators.MapOperator
+
+  def toStringOfOdd[T] = new Operator[T, String]() {
+    private var odd = true
+
+    def apply(child: Subscriber[String]): Subscriber[T] = new Subscriber[T] {
+      implicit val scheduler: Scheduler = child.scheduler
+      private[this] var isDone = false
+
+      def onNext(t: T): Future[Ack] = {
+        val res = if (odd)
+          child.onNext(t.toString)
+        else
+          Continue // there's no `request`, you need to `Continue` and keep track manually
+        odd = !odd
+        res
+      }
+
+      def onError(ex: Throwable): Unit =
+        if (!isDone) {
+          isDone = true
+          child.onError(ex)
+        }
+
+      def onComplete(): Unit =
+        if (!isDone) {
+          isDone = true
+          child.onComplete()
+        }
+
+    }
+  }
+
+  { // 59
+    val odd = Observable
+      .range(1, 10)
+      .liftByOperator(toStringOfOdd)
+    //Will emit: "1", "3", "5", "7" and "9" strings
+  }
+
+  { // 67
+    Observable
+      .range(1, 10)
+      .bufferSliding(1, 2)
+      .concatMap(Observable.fromIterable)
+      .map(_.toString)
+  }
+
+  println("---------")
+
+  { // 112
+    Observable
+      .range(1, 5).repeat
+      .liftByOperator(toStringOfOdd)
+      .take(3).subscribe({ x =>
+      println(x)
+      Continue
+    }, _.printStackTrace, () => println("Completed")
+    )
+  }
+
+  // the part about not passing the child is not relevant because there is no `unsubscribe`
 
 }
