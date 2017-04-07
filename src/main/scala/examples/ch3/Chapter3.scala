@@ -3,10 +3,12 @@ package ch3
 
 import java.time.{DayOfWeek, LocalDate}
 import java.util.UUID
-
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
+import scala.util.Random
 
-import monix.execution.Ack.Continue
+import monix.execution.Ack.{Continue, Stop}
+import monix.execution.Cancelable
 import monix.reactive.Observable
 import monix.execution.Scheduler.Implicits.global
 
@@ -20,16 +22,14 @@ class CarPhoto {}
 class LicensePlate {}
 
 class Order {}
-
 class Customer {
   def getOrders = List(new Order, new Order)
 }
 
 class Rating {}
 class Profile {}
-
 class User {
-  def loadProfile = {
+  def loadProfile: Observable[Profile] = {
     //Make HTTP request...
     Observable(new Profile)
   }
@@ -50,7 +50,7 @@ class Wind {}
 
 class Weather(temperature: Temperature, wind: Wind) {
   def isSunny = true
-  def getTemperature = temperature
+  def getTemperature: Temperature = temperature
 }
 
 sealed trait City
@@ -61,11 +61,22 @@ case object NewYork extends City
 
 class Flight {}
 class Hotel {}
-
 class Vacation(where: City, when: LocalDate) {
   def weather = Observable(new Weather(new Temperature, new Wind))
   def cheapFlightFrom(from: City) = Observable(new Flight)
   def cheapHotel = Observable(new Hotel)
+}
+
+class CashTransfer {
+  def getAmount = BigDecimal(1)
+}
+
+class Data {}
+
+class Car
+object Car {
+  def loadFromDb = Observable(new Car)
+  def loadFromCache = Observable(new Car)
 }
 
 object Chapter3 extends App {
@@ -345,9 +356,8 @@ object Chapter3 extends App {
 
   println("---------")
 
-  def stream(initialDelayMs: Int, intervalMs: Int, name: String) =
+  def stream(initialDelayMs: Int, intervalMs: Int, name: String): Observable[String] =
     Observable.intervalWithFixedDelay(initialDelayMs.millis, intervalMs.millis)
-      //      .dump(name)
       .map(x => s"$name$x")
       .doOnSubscribe(() =>
         logTs(s"Subscribe to $name")
@@ -373,6 +383,173 @@ object Chapter3 extends App {
       .subscribeLog()
     sleep(1.seconds)
     c.cancel()
+  }
+
+  println("---------")
+
+  def transferFile: Observable[Long] =
+    Observable.interval(500.millis).map(_ => Random.nextLong().abs % 20 + 10).take(100)
+
+  { // 419
+    val progress = transferFile
+    val totalProgress = progress
+      .scan(0L)((total: Long, chunk: Long) => total + chunk) // you always have to provide the initial value
+    val c = totalProgress.subscribePrintln()
+    sleep(3.seconds)
+    c.cancel()
+  }
+
+  println("---------")
+
+  { // 431
+    val factorials = Observable
+      .range(2, 100)
+      .scan(BigInt(1))((big, cur) => big * BigInt(cur)) // `scan` in Monix does not emit initial value
+  val c = factorials.subscribePrintln()
+    sleep(10.millis)
+    c.cancel()
+  }
+
+  println("---------")
+
+  { // 440
+    val transfers = Observable(new CashTransfer)
+
+    val total1 = transfers // `reduce` does not typecheck here, need to use a fold
+      .foldLeftF(BigDecimal(0))((totalSoFar, transfer) => totalSoFar + transfer.getAmount)
+
+    val total2 = transfers // this one won't produce anything, seems that `reduce` emits for 2+ elements
+      .map(_.getAmount).reduce(_ + _)
+
+  }
+
+  { // 456
+    val all = Observable.range(10, 20).foldLeftF(new ListBuffer[Long]) { (list, item) =>
+      list.append(item)
+      list
+    }
+  }
+
+
+  // 463 + 470
+  // Monix doesn't have that version of `reduce` - just use `foldLeft`, preferably without mutable accums
+
+  def randomInts: Observable[Int] =
+    Observable.unsafeCreate[Int] { s =>
+      val random = new Random
+      while (s.onNext(random.nextInt(1000)) != Stop) ()
+      Cancelable(() => s.onComplete())
+    }
+
+  { // 490
+    val uniqueRandomInts = randomInts.distinct.take(10)
+  }
+
+  { // 499
+    val tweets = Observable.empty[Status]
+    val distinctUserIds: Observable[Long] = tweets.map(_.getUser.getId).distinct
+  }
+
+  { // 508
+    val tweets = Observable.empty[Status]
+    val distinctUserIds: Observable[Status] = tweets.distinctByKey(_.getUser.getId)
+  }
+
+  { // 516
+    val measurements = Observable.empty[Weather]
+    val tempChanges: Observable[Weather] = measurements.distinctUntilChangedByKey(_.getTemperature)
+  }
+
+  { // 524
+    Observable.range(1, 5).take(3) // [1, 2, 3]
+    Observable.range(1, 5).drop(3) // [4, 5]       // not `skip`
+    Observable.range(1, 5).drop(5) // []
+
+  }
+
+  { // 531
+    Observable.range(1, 5).takeLast(2)
+    Observable.range(1, 5).dropLast(2) // not `skipLast`
+  }
+
+  { // 537
+    // `takeUntil` in Monix has different semantics
+    Observable.range(1, 5).takeWhile(_ != 3) // [1, 2]
+
+  }
+
+  { // 543
+    val size = Observable('A', 'B', 'C', 'D')
+      .foldLeftL(0)((sizeSoFar, _) => sizeSoFar + 1)
+  }
+
+  { // 550
+    val numbers = Observable.range(1, 5)
+    numbers.forAllF(_ != 4) // [false]
+    numbers.existsF(_ == 4) // [true]
+    // there's no `contains`
+  }
+
+  { // 559
+    val veryLong = Observable.range(0, 1000).map(_ => new Data)
+    val ends = Observable.concat(veryLong.take(5), veryLong.takeLast(5))
+  }
+
+  { // 570
+    val fromCache = Car.loadFromCache
+    val fromDb = Car.loadFromDb
+    val found = Observable.concat(fromCache, fromDb).headF
+  }
+
+  def speak(quote: String, millisPerChar: Long): Observable[String] = {
+    val tokens = quote.replaceAll("[:,]", "").split(" ")
+    val words = Observable.fromIterable(tokens)
+    val absoluteDelay = words.map(_.length).map(_ * millisPerChar).scan(0L)(_ + _)
+    words.zip(absoluteDelay.startWith(Seq(0L)))
+      .mergeMap(pair => Observable(pair._1).delaySubscription(pair._2.millis)) // `flatMap` == `concatMap` in Monix
+      .doOnSubscribe(() =>
+      println(s"Subscribe to ${quote.take(6)}")
+    )
+      .doOnSubscriptionCancel(() =>
+        println(s"Unsubscribe from ${quote.take(6)}")
+      )
+  }
+
+  println("---------")
+
+  { // 28
+    val alice = speak("To be, or not to be: that is the question", 110)
+    val bob = speak("Though this be madness, yet there is method in't", 90)
+    val jane = speak("There are more things in Heaven and Earth, Horatio, than are dreamt of in your philosophy", 100)
+    Observable.merge(
+      alice.map(w => s"Alice: $w"),
+      bob.map(w => s"Bob:   $w"),
+      jane.map(w => s"Jane:  $w")
+    ).subscribePrintln()
+    sleep(10.seconds)
+  }
+
+  println("---------")
+
+  { // 52
+
+    val timeout = 10.seconds
+
+    val alice = speak("To be, or not to be: that is the question", 110)
+    val bob = speak("Though this be madness, yet there is method in't", 90)
+    val jane = speak("There are more things in Heaven and Earth, Horatio, than are dreamt of in your philosophy", 100)
+    val rnd = new Random
+    Observable(
+      alice.map(w => s"Alice: $w"),
+      bob.map(w => s"Bob:   $w"),
+      jane.map(w => s"Jane:  $w")
+    ).mergeMap(innerObs => Observable(innerObs).delaySubscription(rnd.nextInt(5).seconds))
+      .delayOnComplete(timeout) // we have to add this, or else the child will be cancelled as soon as the parent finishes emitting
+      .switch
+      .dump("")
+      .subscribe()
+
+    sleep(timeout)
   }
 
 }
