@@ -2,12 +2,10 @@ package examples
 package ch2
 
 import scala.concurrent.duration._
-
+import monix.execution.{Ack, Cancelable}
 import monix.execution.Ack.{Continue, Stop}
-import monix.execution.Cancelable
 import monix.execution.Scheduler.Implicits.global
-import monix.reactive.{Observable, Observer}
-
+import monix.reactive.{Observable, Observer, OverflowStrategy}
 import util.log._
 import util.observable._
 import util.time._
@@ -36,7 +34,7 @@ object Chapter2 extends App {
     )
   }
 
-  def noMore() = ()
+  def noMore(): Unit = ()
 
   {
     // 27+38
@@ -53,14 +51,14 @@ object Chapter2 extends App {
   {
     // 51
     val observer = new Observer[Tweet] {
-      def onNext(tweet: Tweet) = {
+      def onNext(tweet: Tweet): Ack = {
         println(tweet)
         Continue
       }
 
-      def onError(e: Throwable) = e.printStackTrace()
+      def onError(e: Throwable): Unit = e.printStackTrace()
 
-      def onComplete() = noMore()
+      def onComplete(): Unit = noMore()
     }
     tweets.subscribe(observer)
   }
@@ -74,13 +72,13 @@ object Chapter2 extends App {
   {
     // 91
     val subscriber = new Observer[Tweet]() {
-      def onNext(tweet: Tweet) =
+      def onNext(tweet: Tweet): Ack =
       // `Subscription` in Monix is replaced with the `Ack` system
         if (tweet.getText.contains("Java")) Stop else Continue
 
-      def onComplete() = ()
+      def onComplete(): Unit = ()
 
-      def onError(e: Throwable) = e.printStackTrace()
+      def onError(e: Throwable): Unit = e.printStackTrace()
     }
     tweets.subscribe(subscriber)
   }
@@ -100,6 +98,8 @@ object Chapter2 extends App {
 
   {
     // 135
+    // TODO we're violating the backpressure protocol
+    // it's probably impossible make everything run on a main thread with `create`
     val ints = Observable.unsafeCreate[Int] { subscriber =>
       log("Create")
       subscriber.onNext(5)
@@ -116,6 +116,9 @@ object Chapter2 extends App {
       Continue
     }
     log("Exit")
+
+    sleep(1.second)
+
   }
 
   // `just` in Monix is `now`, defined @ monix.reactive.internal.builders.NowObservable
@@ -141,6 +144,8 @@ object Chapter2 extends App {
     }
     log("Exit")
 
+    sleep(1.second)
+
     println("   ---")
 
     val intsCached = ints.cache
@@ -154,6 +159,9 @@ object Chapter2 extends App {
       Continue
     }
     log("Exit")
+
+    sleep(1.second)
+
   }
 
   println("---------")
@@ -162,7 +170,7 @@ object Chapter2 extends App {
 
   {
     // 221
-    val naturalNumbers = Observable.unsafeCreate[BigInt] { subscriber =>
+    val naturalNumbers = Observable.create[BigInt](OverflowStrategy.DropOld(10)) { subscriber =>
       new Thread(() => {
         // again, don't do this manually
         var i = BigInt(0)
@@ -186,14 +194,14 @@ object Chapter2 extends App {
 
   println("---------")
 
-  def sleep_(duration: Duration) =
+  def sleep_(duration: Duration): Unit =
     try
       sleep(duration)
     catch {
       case _: InterruptedException =>
     }
 
-  def delayed[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
+  def delayed[T](x: T): Observable[T] = Observable.unsafeCreate[T] { subscriber =>
     new Thread(() => {
       sleep_(10.seconds)
       subscriber.onNext(x) // again, the check for completion is already made in the wrapper
@@ -201,7 +209,7 @@ object Chapter2 extends App {
     Cancelable(() => subscriber.onComplete())
   }
 
-  def delayed2[T](x: T) = Observable.unsafeCreate[T] { subscriber =>
+  def delayed2[T](x: T): Observable[T] = Observable.unsafeCreate[T] { subscriber =>
     val thread = new Thread(() => {
       sleep_(10.seconds)
       subscriber.onNext(x)
@@ -238,7 +246,5 @@ object Chapter2 extends App {
     }
     sleep(2.seconds)
   }
-
-
 
 }

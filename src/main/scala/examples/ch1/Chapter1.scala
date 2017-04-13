@@ -2,14 +2,13 @@ package examples
 package ch1
 
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.concurrent.duration._
 import scala.concurrent.Future
 
 import monix.eval.Task
 import monix.execution.{Cancelable, Scheduler}
 import monix.execution.Scheduler.Implicits.global
-import monix.reactive.Observable
+import monix.reactive.{Observable, OverflowStrategy}
 
 import util.observable._
 import util.time._
@@ -84,7 +83,9 @@ object Chapter1 extends App {
 
   {
     // 81
-    val o = Observable.unsafeCreate[Int] { s =>
+    // we can't use `unsafeCreate` to push multiple items because of backpressure concerns
+    // see https://monix.io/docs/2x/reactive/observers.html#feeding-an-observer
+    val o = Observable.create[Int](OverflowStrategy.DropOld(10)) { s =>
       s.onNext(1)
       s.onNext(2)
       s.onNext(3)
@@ -93,6 +94,7 @@ object Chapter1 extends App {
     }
 
     o.map(i => s"Number $i").subscribePrintln()
+    sleep(1.second)  // gotta sprinkle these `sleep`s so asynchrony doesn't mess up the output
   }
 
   println("---------")
@@ -118,7 +120,8 @@ object Chapter1 extends App {
 
   {
     // 142
-    val a = Observable.unsafeCreate[String] { s =>
+    // this actually swallows "one" and "three", so again, don't do this
+    val a = Observable.create[String](OverflowStrategy.DropOld(10)) { s =>
       new Thread { () =>
         s.onNext("one")
         s.onNext("two")
@@ -126,7 +129,7 @@ object Chapter1 extends App {
       }.start()
       Cancelable.empty
     }
-    val b = Observable.unsafeCreate[String] { s =>
+    val b = Observable.create[String](OverflowStrategy.DropOld(10)) { s =>
       new Thread { () =>
         s.onNext("three")
         s.onNext("four")
@@ -137,7 +140,7 @@ object Chapter1 extends App {
     // this subscribes to a and b concurrently, and merges into a third sequential stream
     Observable.merge(a, b).subscribePrintln()
 
-    sleep(10.millis)
+    sleep(1.second)
 
   }
 
@@ -145,7 +148,7 @@ object Chapter1 extends App {
 
   {
     // 164
-    def getDataFromServerWithCallback(consumer: String => Unit) =   // got rid of useless `args`
+    def getDataFromServerWithCallback(consumer: String => Unit): Unit =   // got rid of useless `args`
       consumer(s"Random: ${Math.random}")
 
     val someData = Observable.unsafeCreate[String] { s =>
@@ -190,6 +193,9 @@ object Chapter1 extends App {
 
     val o3_ = Observable.merge(o1, o2)
     o3_.subscribePrintln()
+
+    sleep(1.second)
+
   }
 
   println("---------")
